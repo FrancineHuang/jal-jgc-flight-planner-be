@@ -1,35 +1,150 @@
-# JGC Flight Planner API
+# JGC Flight Planner · Backend
 
-Express 5 + TypeScript backend. This release uses **unverified demonstration data only**:
-5 demo LSP per manually eligible domestic segment. It does not implement verified JAL
-rules, verify eligibility, or obtain fares from an external service.
+[English](README.md) | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
 
-## Run and verify
+A flight planning backend for Japan Airlines (JAL) enthusiasts pursuing JGC membership through “shugyō” flights. It estimates Life Status Points (LSP) and cost per point, making it easier to compare routes, segment combinations, and airfare budgets.
+
+## Background
+
+For travelers working toward JAL Global Club (JGC) membership or continuing to accumulate LSP, planning a “shugyō” trip means weighing airfare, flight segments, and the cost of earning points.
+
+JAL’s Life Status Program awards Life Status Points for qualifying flights and lifestyle services. Reaching the applicable point levels and meeting other requirements can provide access to benefits or eligibility for JGC membership. See [JAL’s official Life Status Program introduction](https://www.jal.co.jp/jp/ja/jmb/jmbapp/tips/23/index.html) for background.
+
+This project focuses on one question: **Given a set of flight segments and a total airfare, how many LSP could the trip earn, and what would each point cost?** The backend validates inputs, applies calculation policies, and returns a breakdown through a consistent API for the frontend.
+
+The project is currently a prototype with its first LSP estimate endpoint. **The rate of 5 LSP per eligible domestic segment is unverified demonstration data only; it does not represent an implementation or verification of official JAL rules.** Segment eligibility is supplied manually by the caller. The project does not verify actual earning eligibility and is not affiliated with JAL.
+
+## Current features
+
+- Accept a total airfare in JPY and flight segments to estimate total LSP and cost per point (JPY/LSP).
+- Support three manually supplied eligibility statuses: `eligible`, `ineligible`, and `unknown`.
+- Return a segment breakdown, policy identifier, version, and verification status.
+- Keep calculation rules in a separate, configurable policy engine.
+- Provide a health check, request validation, and JSON error responses.
+
+Estimates currently use manually entered fares and segments. The project does not yet include a database, authentication, or external airfare services.
+
+## Tech stack
+
+| Technology | Purpose |
+| --- | --- |
+| Node.js + npm | Backend runtime and dependency management |
+| TypeScript | Strict type checking with ESM / NodeNext modules |
+| Express 5 | HTTP server and routing |
+| Zod | Request and policy configuration validation |
+| cors | Frontend cross-origin configuration |
+| dotenv | Load local environment variables from `.env` |
+| tsx | Run TypeScript and watch for changes during development |
+| Vitest + Supertest | Policy engine unit tests and HTTP API tests |
+
+See `package.json` and `package-lock.json` for dependency versions.
+
+## Local setup
+
+### 1. Prerequisites
+
+Install Node.js (22.x or 24.x can be used) and its bundled npm. You can also use curl to call the API manually.
 
 ```sh
-npm ci
-npm run dev
-# Production: npm run build && npm start
-
-npm run typecheck
-npm run build
-npm test
+node --version
+npm --version
 ```
 
-The server defaults to port `4000` (`PORT` overrides it). CORS defaults to
-`http://localhost:3000` (`FRONTEND_ORIGIN` overrides it).
-`GET /api/health` retains its existing response:
+You do not need a database, a JAL account, or a third-party API key to run the backend locally.
+
+### 2. Install dependencies
+
+After checking out the project, run the following from the parent directory of the backend:
+
+```sh
+cd jal-jgc-flight-planner-be
+npm ci
+```
+
+If your terminal is already in the backend directory, run `npm ci` directly. It installs dependencies according to the lockfile.
+
+### 3. Configure environment variables (optional)
+
+Create a `.env` file in the backend root:
+
+```dotenv
+PORT=4000
+FRONTEND_ORIGIN=http://localhost:3000
+```
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `4000` | Backend listening port |
+| `FRONTEND_ORIGIN` | `http://localhost:3000` | Allowed frontend origin for CORS, including protocol and port |
+
+The server also starts with these defaults without a `.env` file. `.env` is included in `.gitignore`.
+
+### 4. Start the development server
+
+```sh
+npm run dev
+```
+
+The default server address is `http://localhost:4000`. Development mode watches source files and restarts the server when they change.
+
+Check the server from another terminal:
+
+```sh
+curl http://localhost:4000/api/health
+```
+
+Expected response:
 
 ```json
 { "status": "ok", "service": "JGC Flight Planner API" }
 ```
 
-## Estimate demo LSP
-
-`POST /api/v1/lsp/estimates`, with `Content-Type: application/json`:
+### 5. Build and run the compiled server
 
 ```sh
-curl -X POST http://localhost:4000/api/v1/lsp/estimates \
+npm run build
+npm start
+```
+
+Compiled files are written to `dist/`. Stop the development server before running `npm start`, or use a different `PORT` to avoid a port conflict.
+
+## Common commands
+
+| Command | Purpose |
+| --- | --- |
+| `npm ci` | Install dependencies from the lockfile |
+| `npm run dev` | Start the development server and watch for changes |
+| `npm run typecheck` | Type-check source and test code |
+| `npm run build` | Compile source files into `dist/` |
+| `npm start` | Run the compiled server |
+| `npm test` | Run all Vitest tests |
+
+Before submitting changes, run:
+
+```sh
+npm run typecheck
+npm run build
+npm test
+```
+
+HTTP tests use local temporary ports through Supertest. You do not need to start the development server first.
+
+## API usage
+
+### Health check
+
+`GET /api/health`
+
+Returns the service status. See the startup example above.
+
+### Estimate LSP
+
+`POST /api/v1/lsp/estimates`
+
+Send requests with `Content-Type: application/json`. This example covers Haneda → Naha → Haneda, a total airfare of ¥35,000, and two segments manually marked as eligible:
+
+```sh
+curl -i -X POST http://localhost:4000/api/v1/lsp/estimates \
   -H 'Content-Type: application/json' \
   -d '{
     "totalAirfareJpy": 35000,
@@ -40,7 +155,7 @@ curl -X POST http://localhost:4000/api/v1/lsp/estimates \
   }'
 ```
 
-The response is HTTP 200:
+Expected HTTP 200 response: **10 demo LSP at ¥3,500/LSP**.
 
 ```json
 {
@@ -73,53 +188,70 @@ The response is HTTP 200:
 }
 ```
 
-### Input contract
+#### Request fields
 
-- `totalAirfareJpy`: nonnegative integer JPY, at most `Number.MAX_SAFE_INTEGER`.
-- `segments`: 1–100 segments. Body size limit: 100kb.
-- Each segment requires all five fields shown above. Airport codes must be three
-  uppercase letters; origin and destination must differ. Carrier codes must be two
-  uppercase letters/digits. Dates must be actual calendar dates in `YYYY-MM-DD` format.
-- `eligibility` is `eligible`, `ineligible`, or `unknown`, supplied manually by the caller.
-- Extra fields are rejected. Codes are checked for format, not against a real-world registry.
-  Dates and carriers are retained in the breakdown; this demo has no date or carrier-specific rules.
+| Field | Requirements |
+| --- | --- |
+| `totalAirfareJpy` | Total airfare in JPY; a nonnegative integer no greater than `Number.MAX_SAFE_INTEGER` |
+| `segments` | 1–100 segments, each containing all five fields below |
+| `segments[].origin` | Three-letter uppercase IATA airport code, such as `HND` |
+| `segments[].destination` | Three-letter uppercase IATA airport code; must differ from the origin |
+| `segments[].departureDate` | Valid calendar date in `YYYY-MM-DD` format |
+| `segments[].marketingCarrier` | Two-character uppercase alphanumeric IATA marketing carrier code, such as `JL` |
+| `segments[].eligibility` | `eligible`, `ineligible`, or `unknown`, supplied manually by the caller |
 
-### Calculation behavior
+The request body limit is 100kb, and extra fields are rejected. Airport and carrier codes are checked for format without consulting a real-world registry. Dates and carriers are retained in the breakdown; the demo policy has no date-specific or carrier-specific rules.
 
-| Segment condition | Segment LSP | Reason |
+#### Calculation behavior
+
+| Segment condition | Segment LSP | Breakdown reason |
 | --- | --- | --- |
-| Eligible, both airports in policy scope | 5 by default | `eligible_domestic_demo` |
-| Ineligible | 0 | `ineligible` |
-| Unknown eligibility | `null` | `eligibility_unknown` |
-| Eligible, either airport outside policy scope | `null` | `route_outside_policy_scope` |
+| `eligible`, with both airports in the policy scope | 5 by default | `eligible_domestic_demo` |
+| `ineligible` | 0 | `ineligible` |
+| `unknown` | `null` | `eligibility_unknown` |
+| `eligible`, with either airport outside the policy scope | `null` | `route_outside_policy_scope` |
 
-If any segment has a null estimate, **both `estimatedTotalLsp` and `jpyPerLsp` are null**;
-known segment estimates remain visible in the breakdown. A route outside this limited
-airport list is unsupported, rather than assumed to be international or worth zero.
-All-ineligible itineraries return 0 total LSP and null JPY/LSP. Free airfare is accepted;
-its JPY/LSP is 0 when total LSP is positive. Cost is the full airfare divided by total LSP,
-without display rounding. Segment indexes are zero-based and preserve request order.
+If any segment estimate is `null`, **both `estimatedTotalLsp` and `jpyPerLsp` are `null`**. Known segment results remain in the breakdown. The default airport list covers only the demo scope; airports outside it are not automatically classified as international or worth zero points.
 
-### Policy configuration
+When every segment is `ineligible`, total LSP is 0 and cost per point is `null`. Zero airfare is accepted. When total LSP is positive, cost per point is the full airfare divided by total LSP, without display rounding. `segmentIndex` starts at 0 and follows the request order.
 
-`src/lsp/policy.ts` defines the default policy and a validating `createLspPolicy` factory.
-To change the rate or supported airport list, create a policy with a distinct ID/version
-and inject it with `createApp({ policy })`. Configuration is validated and frozen.
-These policies are restricted to `unverified` / `demonstration_only` in this release;
-changing the rate does not make a policy verified. Bump the policy version whenever its
-rules or supported airports change so a returned estimate remains traceable.
+#### Error responses
 
-`src/lsp/engine.ts` is a pure function, independent of Express and server startup.
-`src/app.ts` constructs the app without listening; `src/index.ts` loads environment
-variables and starts the server. Tests exercise the engine and HTTP API separately.
+Errors are returned as JSON with `error.code` and `error.message`.
 
-### Errors
+| HTTP status | Error code | Meaning |
+| --- | --- | --- |
+| 400 | `VALIDATION_ERROR` | Invalid request fields; `error.issues` provides field paths and reasons |
+| 400 | `INVALID_JSON` | The request body is not valid JSON |
+| 413 | `PAYLOAD_TOO_LARGE` | The request body exceeds 100kb |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` | Use `application/json` |
+| 500 | `INTERNAL_ERROR` | Unexpected server error; internal details are not returned to the client |
 
-Errors are JSON objects with `error.code` and `error.message`:
+For manual checks, set either segment to `unknown`, set both to `ineligible`, or make the airfare negative to inspect unknown estimates, zero-point results, and validation failures.
 
-- HTTP 400 `VALIDATION_ERROR`: invalid request fields; `error.issues` contains field paths
-  (for example `["segments", 0, "departureDate"]`) and messages.
-- HTTP 400 `INVALID_JSON`: malformed JSON body.
-- HTTP 413 `PAYLOAD_TOO_LARGE`: body exceeds 100kb.
-- HTTP 415 `UNSUPPORTED_MEDIA_TYPE`: send `application/json`.
-- HTTP 500 `INTERNAL_ERROR`: unexpected server failure; internal details are not returned.
+## Project structure
+
+```text
+src/
+  index.ts                 # Load environment variables and start the server
+  app.ts                   # Create the Express app, routes, and error middleware
+  lsp/
+    schema.ts              # Request validation and types
+    policy.ts              # Demo policy configuration, versioning, and validation
+    engine.ts              # Independent LSP calculation function
+    routes.ts              # LSP API routes
+tests/
+  fixtures.ts              # Shared demo request
+  lsp-engine.test.ts        # Policy engine tests
+  lsp-api.test.ts           # HTTP API and health check tests
+tsconfig.json              # Source compilation configuration
+tsconfig.test.json         # Type-check configuration including tests
+```
+
+`app.ts` does not listen on a port, so tests can create the app directly. `index.ts` starts the server.
+
+## Policy configuration and versioning
+
+The default policy is defined in `src/lsp/policy.ts`. Create a policy with `createLspPolicy` and inject it using `createApp({ policy })` to configure points per segment and supported airports. The factory validates and freezes the configuration. Calculation logic lives separately in `src/lsp/engine.ts`.
+
+Update the policy version when changing rules or supported airports. Use a distinct ID for a different policy so returned estimates can be traced to their configuration. All policies in this release are restricted to `unverified` / `demonstration_only`; changing the configuration does not make a policy a verified implementation of official rules.
